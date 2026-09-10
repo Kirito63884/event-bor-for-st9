@@ -11,6 +11,7 @@ import traceback
 # Настройки бота
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # ВАЖНО: нужно для работы с ролями и участниками
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Файлы для хранения данных
@@ -22,16 +23,22 @@ DELETE_AFTER_HOURS = 18
 MAX_EVENTS_PER_GUILD = 100
 EVENTS_PER_PAGE = 10
 
+# Название роли для упоминания в напоминаниях
+MENTION_ROLE_NAME = "Участник ST-9"
+
+# Название роли, у которой есть доступ к командам
+ACCESS_ROLE_NAME = "Ком состав"
+
 # Интервалы напоминаний (в минутах до события)
 REMINDER_TIMES = [
-    (3 * 24 * 60 + 180, "3 дня"),
-    (24 * 60 + 180, "24 часа"),
-    (12 * 60 + 180, "12 часов"),
-    (3 * 60 + 180, "3 часа"),
-    (60 + 180, "1 час"),
-    (30+ 180, "30 минут"),
-    (10+ 180, "10 минут"),
-    (0 + 180, "время начала")
+    (3 * 24 * 60+180, "3 дня"),
+    (24 * 60+180, "24 часа"),
+    (12 * 60+180, "12 часов"),
+    (3 * 60+180, "3 часа"),
+    (60+180, "1 час"),
+    (30+180, "30 минут"),
+    (10+180, "10 минут"),
+    (0+180, "время начала")
 ]
 
 # ==================== ФУНКЦИИ РАБОТЫ С ФАЙЛАМИ ====================
@@ -101,6 +108,37 @@ def save_settings(settings):
     except Exception as e:
         print(f"Ошибка сохранения настроек: {e}")
         return False
+
+# ==================== ПРОВЕРКА ПРАВ ====================
+
+def has_access_role(member):
+    """Проверяет, есть ли у участника роль доступа"""
+    if not isinstance(member, discord.Member):
+        return False
+    
+    # Администраторы всегда имеют доступ
+    if member.guild_permissions.administrator:
+        return True
+    
+    # Проверяем наличие роли по названию
+    for role in member.roles:
+        if role.name.lower() == ACCESS_ROLE_NAME.lower():
+            return True
+        # Частичное совпадение
+        if ACCESS_ROLE_NAME.lower() in role.name.lower():
+            return True
+    
+    return False
+
+def access_check():
+    """Декоратор для проверки прав доступа"""
+    async def predicate(interaction: discord.Interaction):
+        if not has_access_role(interaction.user):
+            raise app_commands.CheckFailure(
+                f"❌ У вас нет роли **{ACCESS_ROLE_NAME}** для использования этой команды"
+            )
+        return True
+    return app_commands.check(predicate)
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
@@ -231,8 +269,24 @@ def get_reminder_channel(guild, settings, guild_id):
     
     return None
 
-async def send_reminder(channel, event_number, event_data, reminder_label):
-    """Отправляет напоминание о событии"""
+def find_role_by_name(guild, role_name):
+    """Находит роль по названию"""
+    # Точное совпадение
+    for role in guild.roles:
+        if role.name.lower() == role_name.lower():
+            return role
+    # Частичное совпадение
+    for role in guild.roles:
+        if role_name.lower() in role.name.lower():
+            return role
+    return None
+
+def find_mention_role(guild):
+    """Находит роль для упоминания"""
+    return find_role_by_name(guild, MENTION_ROLE_NAME)
+
+async def send_reminder(channel, guild, event_number, event_data, reminder_label):
+    """Отправляет напоминание о событии с упоминанием роли"""
     try:
         embed = discord.Embed(
             title="⏰ НАПОМИНАНИЕ О СОБЫТИИ",
@@ -245,18 +299,30 @@ async def send_reminder(channel, event_number, event_data, reminder_label):
         embed.add_field(name="👤 Автор", value=f"**{event_data['author']}**", inline=True)
         embed.add_field(name="⏳ До события", value=f"**{reminder_label}**", inline=True)
         
+        mentions = []
+        
+        role = find_mention_role(guild)
+        if role:
+            if role.mentionable:
+                mentions.append(role.mention)
+            else:
+                mentions.append(f"**@{role.name}**")
+        else:
+            print(f"⚠️ Роль '{MENTION_ROLE_NAME}' не найдена на сервере {guild.name}")
+        
         author_id = event_data.get('author_id')
-        mention_text = f"<@{author_id}> " if author_id else ""
+        if author_id:
+            mentions.append(f"<@{author_id}>")
         
-        await channel.send(
-            content=f"{mention_text}🔔 **Напоминание о событии #{event_number}**",
-            embed=embed
-        )
+        mention_text = " ".join(mentions) if mentions else ""
+        content = f"{mention_text}\n🔔 **Напоминание о событии #{event_number}**"
         
+        await channel.send(content=content, embed=embed)
         print(f"✅ Отправлено напоминание за {reminder_label} для события #{event_number}")
         
     except Exception as e:
         print(f"Ошибка отправки напоминания: {e}")
+        traceback.print_exc()
 
 # ==================== СОБЫТИЯ БОТА ====================
 
@@ -273,9 +339,25 @@ async def on_ready():
         cleanup_task.start()
         print("✅ Задача очистки запущена")
     
+    # Проверяем наличие ролей на всех серверах
+    for guild in bot.guilds:
+        access_role = find_role_by_name(guild, ACCESS_ROLE_NAME)
+        mention_role = find_role_by_name(guild, MENTION_ROLE_NAME)
+        
+        print(f"\n📋 Сервер: {guild.name}")
+        if access_role:
+            print(f"  ✅ Роль доступа '{access_role.name}' найдена")
+        else:
+            print(f"  ⚠️ Роль доступа '{ACCESS_ROLE_NAME}' НЕ найдена (только админы)")
+        
+        if mention_role:
+            print(f"  ✅ Роль упоминания '{mention_role.name}' найдена")
+        else:
+            print(f"  ⚠️ Роль упоминания '{MENTION_ROLE_NAME}' НЕ найдена")
+    
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Синхронизировано {len(synced)} слэш-команд")
+        print(f"\n✅ Синхронизировано {len(synced)} слэш-команд")
     except Exception as e:
         print(f"❌ Ошибка синхронизации: {e}")
     
@@ -327,7 +409,7 @@ async def reminder_task():
                     if (reminder_minutes - 1 < minutes_until_event <= reminder_minutes and 
                         reminder_label not in event_data['reminders_sent']):
                         
-                        await send_reminder(channel, event_number, event_data, reminder_label)
+                        await send_reminder(channel, guild, event_number, event_data, reminder_label)
                         event_data['reminders_sent'].append(reminder_label)
                         changed = True
         
@@ -386,12 +468,13 @@ class EventCommands(app_commands.Group):
     def __init__(self):
         super().__init__(name="event", description="Управление событиями")
 
-    @app_commands.command(name="add", description="Добавить новое событие")
+    @app_commands.command(name="add", description="Добавить новое событие (только Ком Состав)")
     @app_commands.describe(
         description="Описание события",
         date="Дата в формате ДД.ММ (например, 25.12)",
         time="Время в формате ЧЧ:ММ (например, 15:30)"
     )
+    @access_check()
     async def add_event(self, interaction: discord.Interaction, description: str, date: str, time: str):
         """Добавляет новое событие"""
         try:
@@ -433,8 +516,8 @@ class EventCommands(app_commands.Group):
             
             save_events(events)
             
-            settings = load_settings()
-            channel_status = "✅ Настроен" if guild_id in settings and 'reminder_channel_id' in settings[guild_id] else "⚠️ Не настроен"
+            role = find_mention_role(interaction.guild)
+            role_status = f"✅ {role.mention}" if role else f"⚠️ Роль '{MENTION_ROLE_NAME}' не найдена"
             
             embed = discord.Embed(
                 title="✅ Событие добавлено",
@@ -446,7 +529,7 @@ class EventCommands(app_commands.Group):
                           f"• За 3 дня, 24 часа, 12 часов\n"
                           f"• За 3 часа, 1 час, 30 минут\n"
                           f"• За 10 минут и в момент начала\n\n"
-                          f"📢 **Канал напоминаний:** {channel_status}",
+                          f"👥 **Роль для упоминания:** {role_status}",
                 color=discord.Color.green()
             )
             await interaction.response.send_message(embed=embed)
@@ -456,8 +539,9 @@ class EventCommands(app_commands.Group):
             traceback.print_exc()
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="list", description="Показать все события")
+    @app_commands.command(name="list", description="Показать все события (только Ком Состав)")
     @app_commands.describe(page="Номер страницы")
+    @access_check()
     async def list_events(self, interaction: discord.Interaction, page: int = 1):
         """Показывает все события"""
         try:
@@ -505,7 +589,8 @@ class EventCommands(app_commands.Group):
             print(f"Ошибка в list_events: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="upcoming", description="Показать ближайшие события")
+    @app_commands.command(name="upcoming", description="Показать ближайшие события (только Ком Состав)")
+    @access_check()
     async def upcoming_events(self, interaction: discord.Interaction):
         """Показывает ближайшие события"""
         try:
@@ -556,8 +641,9 @@ class EventCommands(app_commands.Group):
             print(f"Ошибка в upcoming_events: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="info", description="Показать информацию о событии")
+    @app_commands.command(name="info", description="Показать информацию о событии (только Ком Состав)")
     @app_commands.describe(number="Номер события")
+    @access_check()
     async def show_info(self, interaction: discord.Interaction, number: int):
         """Показывает информацию о событии"""
         try:
@@ -611,8 +697,9 @@ class EventCommands(app_commands.Group):
             print(f"Ошибка в show_info: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="delete", description="Удалить событие")
+    @app_commands.command(name="delete", description="Удалить событие (только Ком Состав)")
     @app_commands.describe(number="Номер события")
+    @access_check()
     async def delete_event(self, interaction: discord.Interaction, number: int):
         """Удаляет событие"""
         try:
@@ -645,14 +732,11 @@ class EventCommands(app_commands.Group):
             print(f"Ошибка в delete_event: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="clear", description="Удалить все события")
+    @app_commands.command(name="clear", description="Удалить все события (только Ком Состав)")
+    @access_check()
     async def clear_events(self, interaction: discord.Interaction):
         """Удаляет все события"""
         try:
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Нужны права администратора", ephemeral=True)
-                return
-            
             events = load_events()
             guild_id = str(interaction.guild.id)
             events[guild_id] = {}
@@ -670,15 +754,12 @@ class SettingsCommands(app_commands.Group):
     def __init__(self):
         super().__init__(name="settings", description="Настройки бота")
 
-    @app_commands.command(name="set_channel", description="Установить канал для напоминаний")
+    @app_commands.command(name="set_channel", description="Установить канал для напоминаний (только Ком Состав)")
     @app_commands.describe(channel="Канал для отправки напоминаний")
+    @access_check()
     async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
         """Устанавливает канал для напоминаний"""
         try:
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Нужны права администратора", ephemeral=True)
-                return
-            
             if not channel.permissions_for(interaction.guild.me).send_messages:
                 await interaction.response.send_message(
                     f"❌ У бота нет прав на отправку сообщений в {channel.mention}", ephemeral=True
@@ -705,7 +786,8 @@ class SettingsCommands(app_commands.Group):
             print(f"Ошибка в set_channel: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="show", description="Показать текущие настройки")
+    @app_commands.command(name="show", description="Показать текущие настройки (только Ком Состав)")
+    @access_check()
     async def show_settings(self, interaction: discord.Interaction):
         """Показывает текущие настройки"""
         try:
@@ -717,6 +799,7 @@ class SettingsCommands(app_commands.Group):
                 color=discord.Color.blue()
             )
             
+            # Канал напоминаний
             if guild_id in settings and 'reminder_channel_id' in settings[guild_id]:
                 channel_id = settings[guild_id]['reminder_channel_id']
                 channel = interaction.guild.get_channel(channel_id)
@@ -741,19 +824,46 @@ class SettingsCommands(app_commands.Group):
                     inline=False
                 )
             
+            # Роль для упоминания
+            mention_role = find_mention_role(interaction.guild)
+            if mention_role:
+                embed.add_field(
+                    name="👥 Роль для упоминания",
+                    value=f"{mention_role.mention} (`{mention_role.name}`)",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="👥 Роль для упоминания",
+                    value=f"⚠️ Роль **{MENTION_ROLE_NAME}** не найдена",
+                    inline=False
+                )
+            
+            # Роль доступа
+            access_role = find_role_by_name(interaction.guild, ACCESS_ROLE_NAME)
+            if access_role:
+                embed.add_field(
+                    name="🔐 Роль доступа",
+                    value=f"{access_role.mention} (`{access_role.name}`)",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="🔐 Роль доступа",
+                    value=f"⚠️ Роль **{ACCESS_ROLE_NAME}** не найдена\n*Только администраторы могут использовать команды*",
+                    inline=False
+                )
+            
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
         except Exception as e:
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-    @app_commands.command(name="reset_channel", description="Сбросить настройку канала")
+    @app_commands.command(name="reset_channel", description="Сбросить настройку канала (только Ком Состав)")
+    @access_check()
     async def reset_channel(self, interaction: discord.Interaction):
         """Сбрасывает настройку канала"""
         try:
-            if not interaction.user.guild_permissions.administrator:
-                await interaction.response.send_message("❌ Нужны права администратора", ephemeral=True)
-                return
-            
             settings = load_settings()
             guild_id = str(interaction.guild.id)
             
@@ -773,6 +883,66 @@ class SettingsCommands(app_commands.Group):
         except Exception as e:
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
+    @app_commands.command(name="check_role", description="Проверить роли на сервере (только Ком Состав)")
+    @access_check()
+    async def check_role(self, interaction: discord.Interaction):
+        """Проверяет наличие ролей на сервере"""
+        try:
+            embed = discord.Embed(
+                title="🔍 Проверка ролей",
+                color=discord.Color.blue()
+            )
+            
+            # Роль доступа
+            access_role = find_role_by_name(interaction.guild, ACCESS_ROLE_NAME)
+            if access_role:
+                embed.add_field(
+                    name=f"🔐 Роль доступа `{ACCESS_ROLE_NAME}`",
+                    value=f"✅ Найдена: {access_role.mention}\n"
+                          f"**ID:** {access_role.id}\n"
+                          f"**Участников:** {len(access_role.members)}",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name=f"🔐 Роль доступа `{ACCESS_ROLE_NAME}`",
+                    value=f"❌ Не найдена на сервере\n"
+                          f"*Только администраторы смогут использовать команды*",
+                    inline=False
+                )
+            
+            # Роль упоминания
+            mention_role = find_mention_role(interaction.guild)
+            if mention_role:
+                embed.add_field(
+                    name=f"👥 Роль упоминания `{MENTION_ROLE_NAME}`",
+                    value=f"✅ Найдена: {mention_role.mention}\n"
+                          f"**ID:** {mention_role.id}\n"
+                          f"**Упоминаемая:** {'✅ Да' if mention_role.mentionable else '❌ Нет'}\n"
+                          f"**Участников:** {len(mention_role.members)}",
+                    inline=False
+                )
+                
+                if not mention_role.mentionable:
+                    embed.add_field(
+                        name="⚠️ Важно",
+                        value="Роль не является упоминаемой. Включите **'Упоминать эту роль'** "
+                              "в настройках роли, чтобы упоминания работали корректно.",
+                        inline=False
+                    )
+            else:
+                embed.add_field(
+                    name=f"👥 Роль упоминания `{MENTION_ROLE_NAME}`",
+                    value=f"❌ Не найдена на сервере\n"
+                          f"*В напоминаниях не будет упоминаний*",
+                    inline=False
+                )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+
 # ==================== КОМАНДА ПОМОЩИ ====================
 
 @bot.tree.command(name="ev_help", description="Показать список всех команд бота")
@@ -782,6 +952,16 @@ async def ev_help_command(interaction: discord.Interaction):
         title="📚 Список команд бота",
         description="**Все доступные команды:**",
         color=discord.Color.purple()
+    )
+    
+    # Проверяем, есть ли у пользователя роль доступа
+    has_access = has_access_role(interaction.user)
+    access_status = "✅ У вас есть доступ" if has_access else f"❌ Требуется роль **{ACCESS_ROLE_NAME}**"
+    
+    embed.add_field(
+        name="🔐 Ваш доступ",
+        value=access_status,
+        inline=False
     )
     
     embed.add_field(
@@ -795,16 +975,17 @@ async def ev_help_command(interaction: discord.Interaction):
               "`номер`\n\n"
               "**/event delete** — Удалить событие\n"
               "`номер`\n\n"
-              "**/event clear** — Удалить все события *(админ)*",
+              "**/event clear** — Удалить все события",
         inline=False
     )
     
     embed.add_field(
-        name="⚙️ Настройки *(админ)*",
+        name="⚙️ Настройки",
         value="**/settings set_channel** — Установить канал напоминаний\n"
               "`канал`\n\n"
               "**/settings show** — Показать текущие настройки\n\n"
-              "**/settings reset_channel** — Сбросить настройку канала",
+              "**/settings reset_channel** — Сбросить настройку канала\n\n"
+              "**/settings check_role** — Проверить роли на сервере",
         inline=False
     )
     
@@ -817,21 +998,25 @@ async def ev_help_command(interaction: discord.Interaction):
     
     embed.add_field(
         name="🔔 Напоминания",
-        value="Автоматические напоминания отправляются:\n"
-              "• За **3 дня** до события\n"
-              "• За **24 часа**\n"
-              "• За **12 часов**\n"
-              "• За **3 часа**\n"
-              "• За **1 час**\n"
-              "• За **30 минут**\n"
-              "• За **10 минут**\n"
-              "• В **момент начала**",
+        value="За **3 дня**, **24ч**, **12ч**, **3ч**, **1ч**, **30мин**, **10мин** и в **момент начала**",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔐 Доступ к командам",
+        value=f"Команды доступны только роли **{ACCESS_ROLE_NAME}** и администраторам",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="👥 Упоминание в напоминаниях",
+        value=f"Роль **{MENTION_ROLE_NAME}**",
         inline=False
     )
     
     embed.add_field(
         name="🗑️ Автоудаление",
-        value=f"События удаляются через **{DELETE_AFTER_HOURS} часов** после их прохождения",
+        value=f"События удаляются через **{DELETE_AFTER_HOURS} часов** после прохождения",
         inline=False
     )
     
@@ -846,11 +1031,35 @@ bot.tree.add_command(SettingsCommands())
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
-    print(f"Ошибка команды: {error}")
+    """Обработка ошибок команд"""
     try:
-        await interaction.response.send_message(f"❌ Ошибка: {error}", ephemeral=True)
-    except:
-        pass
+        if isinstance(error, app_commands.CheckFailure):
+            # Ошибка проверки прав
+            embed = discord.Embed(
+                title="🔐 Доступ запрещён",
+                description=f"{error}",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="💡 Что делать?",
+                value=f"Обратитесь к администрации сервера для получения роли **{ACCESS_ROLE_NAME}**",
+                inline=False
+            )
+            
+            try:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            except:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        else:
+            print(f"Ошибка команды: {error}")
+            traceback.print_exc()
+            try:
+                await interaction.response.send_message(f"❌ Ошибка: {error}", ephemeral=True)
+            except:
+                await interaction.followup.send(f"❌ Ошибка: {error}", ephemeral=True)
+    except Exception as e:
+        print(f"Критическая ошибка обработки: {e}")
+        traceback.print_exc()
 
 # ==================== ЗАПУСК БОТА ====================
 
