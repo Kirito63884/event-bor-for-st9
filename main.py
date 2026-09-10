@@ -13,23 +13,28 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Файл для хранения данных
+# Файлы для хранения данных
 DATA_FILE = 'events.json'
+SETTINGS_FILE = 'settings.json'
+
+# Настройки
 DELETE_AFTER_HOURS = 18
 MAX_EVENTS_PER_GUILD = 100
 EVENTS_PER_PAGE = 10
 
 # Интервалы напоминаний (в минутах до события)
 REMINDER_TIMES = [
-    (3 * 24 * 60, "3 дня"),      # 3 дня
-    (24 * 60, "24 часа"),         # 24 часа
-    (12 * 60, "12 часов"),        # 12 часов
-    (3 * 60, "3 часа"),           # 3 часа
-    (60, "1 час"),                # 1 час
-    (30, "30 минут"),             # 30 минут
-    (10, "10 минут"),             # 10 минут
-    (0, "время начала")           # В момент начала
+    (3 * 24 * 60 + 180, "3 дня"),
+    (24 * 60 + 180, "24 часа"),
+    (12 * 60 + 180, "12 часов"),
+    (3 * 60 + 180, "3 часа"),
+    (60 + 180, "1 час"),
+    (30+ 180, "30 минут"),
+    (10+ 180, "10 минут"),
+    (0 + 180, "время начала")
 ]
+
+# ==================== ФУНКЦИИ РАБОТЫ С ФАЙЛАМИ ====================
 
 def load_events():
     """Загружает события из файла"""
@@ -55,7 +60,6 @@ def load_events():
         return {}
     except Exception as e:
         print(f"Ошибка загрузки: {e}")
-        traceback.print_exc()
         return {}
 
 def save_events(events):
@@ -63,95 +67,99 @@ def save_events(events):
     try:
         if not isinstance(events, dict):
             events = {}
-        
         with open(DATA_FILE, 'w', encoding='utf-8') as f:
             json.dump(events, f, ensure_ascii=False, indent=4)
         return True
     except Exception as e:
         print(f"Ошибка сохранения: {e}")
-        traceback.print_exc()
         return False
 
+def load_settings():
+    """Загружает настройки серверов"""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+                if content:
+                    data = json.loads(content)
+                    if isinstance(data, dict):
+                        return data
+                return {}
+        return {}
+    except Exception as e:
+        print(f"Ошибка загрузки настроек: {e}")
+        return {}
+
+def save_settings(settings):
+    """Сохраняет настройки серверов"""
+    try:
+        if not isinstance(settings, dict):
+            settings = {}
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(settings, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print(f"Ошибка сохранения настроек: {e}")
+        return False
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
 def get_next_event_number(events, guild_id):
-    """Получает следующий номер события для сервера"""
+    """Получает следующий номер события"""
     try:
         guild_id_str = str(guild_id)
-        
         if guild_id_str not in events:
             return 1
-        
         guild_events = events[guild_id_str]
-        
         if not guild_events:
             return 1
-        
         numbers = []
         for key in guild_events.keys():
             try:
                 numbers.append(int(key))
             except:
                 pass
-        
         return max(numbers) + 1 if numbers else 1
-    except Exception as e:
-        print(f"Ошибка получения номера: {e}")
+    except:
         return 1
 
 def validate_date(date_str):
-    """Проверяет корректность даты в формате ДД.ММ"""
+    """Проверяет корректность даты"""
     if not date_str:
         return False, "Дата не может быть пустой"
-    
     pattern = r'^(\d{2})\.(\d{2})$'
     match = re.match(pattern, date_str)
-    
     if not match:
         return False, "Неверный формат даты. Используйте ДД.ММ"
-    
     day, month = int(match.group(1)), int(match.group(2))
-    
     if month < 1 or month > 12:
         return False, "Неверный месяц"
-    
-    days_in_month = {
-        1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
-        7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31
-    }
-    
+    days_in_month = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+                     7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
     if day < 1 or day > days_in_month[month]:
         return False, f"Неверный день для месяца {month}"
-    
     return True, ""
 
 def validate_time(time_str):
     """Проверяет корректность времени"""
     if not time_str:
         return False, "Время не может быть пустым"
-    
     pattern = r'^(\d{1,2})[:：\-](\d{2})$'
     match = re.match(pattern, time_str)
-    
     if not match:
         return False, "Неверный формат времени. Используйте ЧЧ:ММ или ЧЧ-ММ"
-    
     hour, minute = int(match.group(1)), int(match.group(2))
-    
     if hour < 0 or hour > 23:
         return False, "Неверный час"
-    
     if minute < 0 or minute > 59:
         return False, "Неверные минуты"
-    
     return True, ""
 
 def format_date_display(date_str):
     """Форматирует дату для отображения"""
-    months = {
-        1: "января", 2: "февраля", 3: "марта", 4: "апреля",
-        5: "мая", 6: "июня", 7: "июля", 8: "августа",
-        9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
-    }
-    
+    months = {1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+              5: "мая", 6: "июня", 7: "июля", 8: "августа",
+              9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"}
     try:
         day, month = date_str.split('.')
         return f"{int(day)} {months[int(month)]}"
@@ -172,10 +180,8 @@ def get_event_datetime(event_data, year=None):
     try:
         day, month = map(int, event_data['date'].split('.'))
         hour, minute = map(int, event_data['time'].split(':'))
-        
         if year is None:
             year = datetime.now().year
-            
         return datetime(year, month, day, hour, minute)
     except:
         return None
@@ -187,50 +193,82 @@ def sort_events_by_date(events_dict):
             event_data = item[1]
             date_parts = event_data['date'].split('.')
             time_parts = event_data['time'].split(':')
-            
-            return (
-                int(date_parts[1]),  # месяц
-                int(date_parts[0]),  # день
-                int(time_parts[0]),  # час
-                int(time_parts[1])   # минуты
-            )
+            return (int(date_parts[1]), int(date_parts[0]),
+                    int(time_parts[0]), int(time_parts[1]))
         except:
             return (99, 99, 99, 99)
-    
     return sorted(events_dict.items(), key=get_sort_key)
 
-def is_event_passed(event_data, current_time=None):
-    """Проверяет, прошло ли событие"""
-    if current_time is None:
-        current_time = datetime.now()
+def get_reminder_color(reminder_label):
+    """Возвращает цвет для напоминания"""
+    colors = {
+        "3 дня": discord.Color.blue(),
+        "24 часа": discord.Color.teal(),
+        "12 часов": discord.Color.green(),
+        "3 часа": discord.Color.gold(),
+        "1 час": discord.Color.orange(),
+        "30 минут": discord.Color.red(),
+        "10 минут": discord.Color.dark_red(),
+        "время начала": discord.Color.purple()
+    }
+    return colors.get(reminder_label, discord.Color.blue())
+
+def get_reminder_channel(guild, settings, guild_id):
+    """Получает канал для отправки напоминаний"""
+    guild_id_str = str(guild_id)
     
-    event_time = get_event_datetime(event_data, current_time.year)
+    if guild_id_str in settings and 'reminder_channel_id' in settings[guild_id_str]:
+        channel_id = settings[guild_id_str]['reminder_channel_id']
+        channel = guild.get_channel(channel_id)
+        if channel and channel.permissions_for(guild.me).send_messages:
+            return channel
+        else:
+            print(f"⚠️ Настроенный канал {channel_id} недоступен")
     
-    if event_time is None:
-        return False
+    for channel in guild.text_channels:
+        if channel.permissions_for(guild.me).send_messages:
+            return channel
     
-    if event_time < current_time:
-        return True
-    
-    # Проверка на события в начале года
-    if current_time.month > 10 and event_time.month < 3:
-        event_time_last_year = get_event_datetime(event_data, current_time.year - 1)
-        if event_time_last_year and event_time_last_year < current_time:
-            return True
-    
-    return False
+    return None
+
+async def send_reminder(channel, event_number, event_data, reminder_label):
+    """Отправляет напоминание о событии"""
+    try:
+        embed = discord.Embed(
+            title="⏰ НАПОМИНАНИЕ О СОБЫТИИ",
+            color=get_reminder_color(reminder_label)
+        )
+        
+        embed.add_field(name="📅 Дата", value=f"**{event_data.get('date_formatted', event_data['date'])}**", inline=True)
+        embed.add_field(name="⏰ Время", value=f"**{event_data['time']}**", inline=True)
+        embed.add_field(name="📝 Описание", value=f"**{event_data['description']}**", inline=False)
+        embed.add_field(name="👤 Автор", value=f"**{event_data['author']}**", inline=True)
+        embed.add_field(name="⏳ До события", value=f"**{reminder_label}**", inline=True)
+        
+        author_id = event_data.get('author_id')
+        mention_text = f"<@{author_id}> " if author_id else ""
+        
+        await channel.send(
+            content=f"{mention_text}🔔 **Напоминание о событии #{event_number}**",
+            embed=embed
+        )
+        
+        print(f"✅ Отправлено напоминание за {reminder_label} для события #{event_number}")
+        
+    except Exception as e:
+        print(f"Ошибка отправки напоминания: {e}")
+
+# ==================== СОБЫТИЯ БОТА ====================
 
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} подключился к Discord!')
     print(f'ID бота: {bot.user.id}')
     
-    # Запускаем задачу проверки напоминаний
     if not reminder_task.is_running():
         reminder_task.start()
         print("✅ Задача напоминаний запущена")
     
-    # Запускаем задачу очистки
     if not cleanup_task.is_running():
         cleanup_task.start()
         print("✅ Задача очистки запущена")
@@ -243,141 +281,62 @@ async def on_ready():
     
     print('------')
 
-@tasks.loop(minutes=1)  # Проверяем каждую минуту
+# ==================== ФОНОВЫЕ ЗАДАЧИ ====================
+
+@tasks.loop(minutes=1)
 async def reminder_task():
-    """Проверяет и отправляет напоминания о событиях"""
+    """Проверяет и отправляет напоминания"""
     try:
         events = load_events()
+        settings = load_settings()
+        
         if not events:
             return
         
         current_time = datetime.now()
+        changed = False
         
         for guild_id, guild_events in events.items():
             if not guild_events:
                 continue
             
-            # Получаем guild объект
             guild = bot.get_guild(int(guild_id))
             if not guild:
                 continue
             
+            channel = get_reminder_channel(guild, settings, guild_id)
+            if not channel:
+                continue
+            
             for event_number, event_data in guild_events.items():
-                # Пропускаем события, для которых уже отправлены все напоминания
                 if 'reminders_sent' not in event_data:
                     event_data['reminders_sent'] = []
+                    changed = True
                 
-                # Получаем время события
                 event_time = get_event_datetime(event_data, current_time.year)
-                
                 if event_time is None:
                     continue
                 
-                # Если событие в начале года, а сейчас конец года
                 if event_time < current_time and current_time.month > 10 and event_time.month < 3:
                     event_time = get_event_datetime(event_data, current_time.year + 1)
                 
-                # Вычисляем разницу во времени
                 time_diff = event_time - current_time
                 minutes_until_event = time_diff.total_seconds() / 60
                 
-                # Проверяем напоминания
                 for reminder_minutes, reminder_label in REMINDER_TIMES:
-                    # Если время напоминания наступило и еще не отправлено
                     if (reminder_minutes - 1 < minutes_until_event <= reminder_minutes and 
                         reminder_label not in event_data['reminders_sent']):
                         
-                        # Отправляем напоминание
-                        await send_reminder(guild, event_number, event_data, reminder_label)
-                        
-                        # Отмечаем, что напоминание отправлено
+                        await send_reminder(channel, event_number, event_data, reminder_label)
                         event_data['reminders_sent'].append(reminder_label)
+                        changed = True
         
-        # Сохраняем обновленные данные
-        save_events(events)
+        if changed:
+            save_events(events)
         
     except Exception as e:
         print(f"Ошибка в reminder_task: {e}")
         traceback.print_exc()
-
-async def send_reminder(guild, event_number, event_data, reminder_label):
-    """Отправляет напоминание о событии"""
-    try:
-        # Ищем текстовый канал для отправки
-        # Можно настроить конкретный канал
-        target_channel = None
-        
-        # Ищем первый доступный текстовый канал
-        for channel in guild.text_channels:
-            if channel.permissions_for(guild.me).send_messages:
-                target_channel = channel
-                break
-        
-        if not target_channel:
-            return
-        
-        # Создаем embed для напоминания
-        embed = discord.Embed(
-            title="⏰ НАПОМИНАНИЕ О СОБЫТИИ",
-            color=get_reminder_color(reminder_label)
-        )
-        
-        embed.add_field(
-            name="📅 Дата",
-            value=f"**{event_data.get('date_formatted', event_data['date'])}**",
-            inline=True
-        )
-        embed.add_field(
-            name="⏰ Время",
-            value=f"**{event_data['time']}**",
-            inline=True
-        )
-        embed.add_field(
-            name="📝 Описание",
-            value=f"**{event_data['description']}**",
-            inline=False
-        )
-        embed.add_field(
-            name="👤 Автор",
-            value=f"**{event_data['author']}**",
-            inline=True
-        )
-        embed.add_field(
-            name="⏳ До события",
-            value=f"**{reminder_label}**",
-            inline=True
-        )
-        
-        # Добавляем упоминание автора события
-        author_id = event_data.get('author_id')
-        mention_text = ""
-        if author_id:
-            mention_text = f"<@{author_id}> "
-        
-        await target_channel.send(
-            content=f"{mention_text}🔔 **Напоминание о событии #{event_number}**",
-            embed=embed
-        )
-        
-        print(f"✅ Отправлено напоминание за {reminder_label} для события #{event_number}")
-        
-    except Exception as e:
-        print(f"Ошибка отправки напоминания: {e}")
-        traceback.print_exc()
-
-def get_reminder_color(reminder_label):
-    """Возвращает цвет для напоминания в зависимости от времени"""
-    colors = {
-        "3 дня": discord.Color.blue(),
-        "24 часа": discord.Color.teal(),
-        "12 часов": discord.Color.green(),
-        "3 часа": discord.Color.gold(),
-        "1 час": discord.Color.orange(),
-        "30 минут": discord.Color.red(),
-        "10 минут": discord.Color.dark_red(),
-        "время начала": discord.Color.purple()
-    }
-    return colors.get(reminder_label, discord.Color.blue())
 
 @tasks.loop(hours=1)
 async def cleanup_task():
@@ -412,7 +371,6 @@ async def cleanup_task():
             
     except Exception as e:
         print(f"Ошибка в cleanup_task: {e}")
-        traceback.print_exc()
 
 @reminder_task.before_loop
 async def before_reminder_task():
@@ -422,7 +380,8 @@ async def before_reminder_task():
 async def before_cleanup_task():
     await bot.wait_until_ready()
 
-# Группа команд для событий
+# ==================== ГРУППА КОМАНД: СОБЫТИЯ ====================
+
 class EventCommands(app_commands.Group):
     def __init__(self):
         super().__init__(name="event", description="Управление событиями")
@@ -436,13 +395,11 @@ class EventCommands(app_commands.Group):
     async def add_event(self, interaction: discord.Interaction, description: str, date: str, time: str):
         """Добавляет новое событие"""
         try:
-            # Проверяем дату
             is_valid_date, date_error = validate_date(date)
             if not is_valid_date:
                 await interaction.response.send_message(f"❌ {date_error}", ephemeral=True)
                 return
             
-            # Проверяем время
             is_valid_time, time_error = validate_time(time)
             if not is_valid_time:
                 await interaction.response.send_message(f"❌ {time_error}", ephemeral=True)
@@ -454,11 +411,9 @@ class EventCommands(app_commands.Group):
             if guild_id not in events:
                 events[guild_id] = {}
             
-            # Проверяем лимит
             if len(events[guild_id]) >= MAX_EVENTS_PER_GUILD:
                 await interaction.response.send_message(
-                    f"⚠️ Достигнут лимит в {MAX_EVENTS_PER_GUILD} событий",
-                    ephemeral=True
+                    f"⚠️ Достигнут лимит в {MAX_EVENTS_PER_GUILD} событий", ephemeral=True
                 )
                 return
             
@@ -473,10 +428,13 @@ class EventCommands(app_commands.Group):
                 'author': str(interaction.user),
                 'author_id': interaction.user.id,
                 'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'reminders_sent': []  # Список отправленных напоминаний
+                'reminders_sent': []
             }
             
             save_events(events)
+            
+            settings = load_settings()
+            channel_status = "✅ Настроен" if guild_id in settings and 'reminder_channel_id' in settings[guild_id] else "⚠️ Не настроен"
             
             embed = discord.Embed(
                 title="✅ Событие добавлено",
@@ -485,14 +443,10 @@ class EventCommands(app_commands.Group):
                           f"**Время:** {normalized_time}\n"
                           f"**Описание:** {description}\n\n"
                           f"🔔 **Напоминания будут отправлены:**\n"
-                          f"• За 3 дня\n"
-                          f"• За 24 часа\n"
-                          f"• За 12 часов\n"
-                          f"• За 3 часа\n"
-                          f"• За 1 час\n"
-                          f"• За 30 минут\n"
-                          f"• За 10 минут\n"
-                          f"• В момент начала",
+                          f"• За 3 дня, 24 часа, 12 часов\n"
+                          f"• За 3 часа, 1 час, 30 минут\n"
+                          f"• За 10 минут и в момент начала\n\n"
+                          f"📢 **Канал напоминаний:** {channel_status}",
                 color=discord.Color.green()
             )
             await interaction.response.send_message(embed=embed)
@@ -511,12 +465,7 @@ class EventCommands(app_commands.Group):
             guild_id = str(interaction.guild.id)
             
             if guild_id not in events or not events[guild_id]:
-                embed = discord.Embed(
-                    title="📋 Список событий",
-                    description="Нет сохраненных событий",
-                    color=discord.Color.blue()
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
+                await interaction.response.send_message("📋 Нет сохраненных событий", ephemeral=True)
                 return
             
             sorted_events = sort_events_by_date(events[guild_id])
@@ -540,22 +489,20 @@ class EventCommands(app_commands.Group):
             
             for number, event_data in page_events:
                 reminders_count = len(event_data.get('reminders_sent', []))
-                total_reminders = len(REMINDER_TIMES)
-                
                 embed.add_field(
                     name=f"📌 Событие #{number}",
                     value=f"**Дата:** {event_data.get('date_formatted', event_data['date'])}\n"
                           f"**Время:** {event_data['time']}\n"
                           f"**Описание:** {event_data['description']}\n"
-                          f"**Напоминания:** {reminders_count}/{total_reminders} отправлено",
+                          f"**Напоминания:** {reminders_count}/{len(REMINDER_TIMES)}",
                     inline=False
                 )
             
+            embed.set_footer(text=f"Страница {page} из {total_pages}")
             await interaction.response.send_message(embed=embed)
             
         except Exception as e:
             print(f"Ошибка в list_events: {e}")
-            traceback.print_exc()
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
     @app_commands.command(name="upcoming", description="Показать ближайшие события")
@@ -595,8 +542,7 @@ class EventCommands(app_commands.Group):
                     
                     embed.add_field(
                         name=f"📌 #{number} | {event_data['date']} в {event_data['time']}",
-                        value=f"**{event_data['description']}**\n"
-                              f"⏳ {time_left}",
+                        value=f"**{event_data['description']}**\n⏳ {time_left}",
                         inline=False
                     )
                     events_added += 1
@@ -629,7 +575,6 @@ class EventCommands(app_commands.Group):
             
             event_data = events[guild_id][event_key]
             
-            # Получаем время события
             event_time = get_event_datetime(event_data)
             now = datetime.now()
             time_diff = event_time - now if event_time else None
@@ -643,11 +588,10 @@ class EventCommands(app_commands.Group):
             embed.add_field(name="📝 Описание", value=f"**{event_data['description']}**", inline=False)
             embed.add_field(name="👤 Автор", value=f"**{event_data['author']}**", inline=True)
             
-            # Информация о напоминаниях
             reminders_sent = event_data.get('reminders_sent', [])
             embed.add_field(
                 name="🔔 Напоминания",
-                value=f"Отправлено: **{len(reminders_sent)}/{len(REMINDER_TIMES)}**",
+                value=f"**{len(reminders_sent)}/{len(REMINDER_TIMES)}**",
                 inline=True
             )
             
@@ -711,7 +655,6 @@ class EventCommands(app_commands.Group):
             
             events = load_events()
             guild_id = str(interaction.guild.id)
-            
             events[guild_id] = {}
             save_events(events)
             
@@ -721,44 +664,185 @@ class EventCommands(app_commands.Group):
             print(f"Ошибка в clear_events: {e}")
             await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
 
-# Команда помощи
-@bot.tree.command(name="help", description="Показать список команд")
-async def help_command(interaction: discord.Interaction):
-    """Показывает список команд"""
+# ==================== ГРУППА КОМАНД: НАСТРОЙКИ ====================
+
+class SettingsCommands(app_commands.Group):
+    def __init__(self):
+        super().__init__(name="settings", description="Настройки бота")
+
+    @app_commands.command(name="set_channel", description="Установить канал для напоминаний")
+    @app_commands.describe(channel="Канал для отправки напоминаний")
+    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        """Устанавливает канал для напоминаний"""
+        try:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("❌ Нужны права администратора", ephemeral=True)
+                return
+            
+            if not channel.permissions_for(interaction.guild.me).send_messages:
+                await interaction.response.send_message(
+                    f"❌ У бота нет прав на отправку сообщений в {channel.mention}", ephemeral=True
+                )
+                return
+            
+            settings = load_settings()
+            guild_id = str(interaction.guild.id)
+            
+            if guild_id not in settings:
+                settings[guild_id] = {}
+            
+            settings[guild_id]['reminder_channel_id'] = channel.id
+            save_settings(settings)
+            
+            embed = discord.Embed(
+                title="✅ Канал настроен",
+                description=f"Напоминания будут отправляться в {channel.mention}",
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=embed)
+            
+        except Exception as e:
+            print(f"Ошибка в set_channel: {e}")
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+
+    @app_commands.command(name="show", description="Показать текущие настройки")
+    async def show_settings(self, interaction: discord.Interaction):
+        """Показывает текущие настройки"""
+        try:
+            settings = load_settings()
+            guild_id = str(interaction.guild.id)
+            
+            embed = discord.Embed(
+                title="⚙️ Настройки бота",
+                color=discord.Color.blue()
+            )
+            
+            if guild_id in settings and 'reminder_channel_id' in settings[guild_id]:
+                channel_id = settings[guild_id]['reminder_channel_id']
+                channel = interaction.guild.get_channel(channel_id)
+                
+                if channel:
+                    embed.add_field(
+                        name="📢 Канал напоминаний",
+                        value=channel.mention,
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="📢 Канал напоминаний",
+                        value=f"⚠️ Канал не найден (ID: {channel_id})",
+                        inline=False
+                    )
+            else:
+                embed.add_field(
+                    name="📢 Канал напоминаний",
+                    value="⚠️ Не настроен\n*Используется первый доступный канал*\n\n"
+                          "Используйте `/settings set_channel` для настройки",
+                    inline=False
+                )
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+
+    @app_commands.command(name="reset_channel", description="Сбросить настройку канала")
+    async def reset_channel(self, interaction: discord.Interaction):
+        """Сбрасывает настройку канала"""
+        try:
+            if not interaction.user.guild_permissions.administrator:
+                await interaction.response.send_message("❌ Нужны права администратора", ephemeral=True)
+                return
+            
+            settings = load_settings()
+            guild_id = str(interaction.guild.id)
+            
+            if guild_id in settings and 'reminder_channel_id' in settings[guild_id]:
+                del settings[guild_id]['reminder_channel_id']
+                save_settings(settings)
+                
+                embed = discord.Embed(
+                    title="✅ Настройка сброшена",
+                    description="Напоминания будут отправляться в первый доступный канал",
+                    color=discord.Color.green()
+                )
+                await interaction.response.send_message(embed=embed)
+            else:
+                await interaction.response.send_message("ℹ️ Канал не был настроен", ephemeral=True)
+                
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка: {e}", ephemeral=True)
+
+# ==================== КОМАНДА ПОМОЩИ ====================
+
+@bot.tree.command(name="ev_help", description="Показать список всех команд бота")
+async def ev_help_command(interaction: discord.Interaction):
+    """Показывает список всех команд"""
     embed = discord.Embed(
-        title="📚 Список команд",
+        title="📚 Список команд бота",
+        description="**Все доступные команды:**",
         color=discord.Color.purple()
     )
     
-    commands_info = [
-        ("/event add", "Добавить событие\n`описание` `дата` `время`"),
-        ("/event list", "Показать все события"),
-        ("/event upcoming", "Показать ближайшие события"),
-        ("/event info", "Информация о событии\n`номер`"),
-        ("/event delete", "Удалить событие\n`номер`"),
-        ("/event clear", "Удалить все события"),
-        ("/help", "Показать этот список")
-    ]
+    embed.add_field(
+        name="📅 Управление событиями",
+        value="**/event add** — Добавить событие\n"
+              "`описание` `дата` `время`\n\n"
+              "**/event list** — Показать все события\n"
+              "`страница` (опционально)\n\n"
+              "**/event upcoming** — Ближайшие события\n\n"
+              "**/event info** — Информация о событии\n"
+              "`номер`\n\n"
+              "**/event delete** — Удалить событие\n"
+              "`номер`\n\n"
+              "**/event clear** — Удалить все события *(админ)*",
+        inline=False
+    )
     
-    for command, description in commands_info:
-        embed.add_field(name=f"**{command}**", value=f"**{description}**", inline=False)
+    embed.add_field(
+        name="⚙️ Настройки *(админ)*",
+        value="**/settings set_channel** — Установить канал напоминаний\n"
+              "`канал`\n\n"
+              "**/settings show** — Показать текущие настройки\n\n"
+              "**/settings reset_channel** — Сбросить настройку канала",
+        inline=False
+    )
     
     embed.add_field(
         name="📝 Форматы",
-        value="**Дата:** ДД.ММ (25.12)\n**Время:** ЧЧ:ММ (15:30)",
+        value="**Дата:** `ДД.ММ` (например, `25.12`)\n"
+              "**Время:** `ЧЧ:ММ` или `ЧЧ-ММ` (например, `15:30`)",
         inline=False
     )
     
     embed.add_field(
         name="🔔 Напоминания",
-        value="За 3 дня, 24 часа, 12 часов, 3 часа, 1 час, 30 минут, 10 минут и в момент начала",
+        value="Автоматические напоминания отправляются:\n"
+              "• За **3 дня** до события\n"
+              "• За **24 часа**\n"
+              "• За **12 часов**\n"
+              "• За **3 часа**\n"
+              "• За **1 час**\n"
+              "• За **30 минут**\n"
+              "• За **10 минут**\n"
+              "• В **момент начала**",
         inline=False
     )
     
+    embed.add_field(
+        name="🗑️ Автоудаление",
+        value=f"События удаляются через **{DELETE_AFTER_HOURS} часов** после их прохождения",
+        inline=False
+    )
+    
+    embed.set_footer(text="Бот для управления событиями")
+    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Регистрация команд
+# ==================== РЕГИСТРАЦИЯ КОМАНД ====================
+
 bot.tree.add_command(EventCommands())
+bot.tree.add_command(SettingsCommands())
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
@@ -768,10 +852,16 @@ async def on_app_command_error(interaction: discord.Interaction, error):
     except:
         pass
 
+# ==================== ЗАПУСК БОТА ====================
+
 if __name__ == "__main__":
     if not os.path.exists(DATA_FILE):
         save_events({})
         print(f"✅ Создан файл {DATA_FILE}")
+    
+    if not os.path.exists(SETTINGS_FILE):
+        save_settings({})
+        print(f"✅ Создан файл {SETTINGS_FILE}")
     
     TOKEN = "ВАШ_ТОКЕН_БОТА"
     bot.run(TOKEN)
